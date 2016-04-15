@@ -53,7 +53,7 @@ parse_stapsdt_note(struct bcc_elf_usdt *probe, const char *desc, int elf_class)
 
 static int do_note_segment(
 	Elf_Scn *section, int elf_class,
-	bcc_elf_probecb callback, void *payload)
+	bcc_elf_probecb callback, const char *binpath, void *payload)
 {
 	Elf_Data *data = NULL;
 
@@ -79,13 +79,13 @@ static int do_note_segment(
 			desc_end = desc + hdr.n_descsz;
 
 			if (parse_stapsdt_note(&probe, desc, elf_class) == desc_end)
-				callback(&probe, payload);
+				callback(binpath, &probe, payload);
 		}
 	}
 	return 0;
 }
 
-static int listprobes(Elf *e, bcc_elf_probecb callback, void *payload)
+static int listprobes(Elf *e, bcc_elf_probecb callback, const char *binpath, void *payload)
 {
 	Elf_Scn *section = NULL;
 	size_t stridx;
@@ -106,7 +106,7 @@ static int listprobes(Elf *e, bcc_elf_probecb callback, void *payload)
 
 		name = elf_strptr(e, stridx, header.sh_name);
 		if (name && !strcmp(name, ".note.stapsdt")) {
-			if (do_note_segment(section, elf_class, callback, payload) < 0)
+			if (do_note_segment(section, elf_class, callback, binpath, payload) < 0)
 				return -1;
 		}
 	}
@@ -122,7 +122,7 @@ int bcc_elf_foreach_usdt(const char *path, bcc_elf_probecb callback, void *paylo
 	if (openelf(path, &e, &fd) < 0)
 		return -1;
 
-	res = listprobes(e, callback, payload);
+	res = listprobes(e, callback, path, payload);
 	elf_end(e);
 	close(fd);
 
@@ -255,6 +255,24 @@ int bcc_elf_loadaddr(const char *path, uint64_t *address)
 		return -1;
 
 	res = loadaddr(e, address);
+	elf_end(e);
+	close(fd);
+
+	return res;
+}
+
+int bcc_elf_is_shared_obj(const char *path)
+{
+	Elf *e;
+	GElf_Ehdr hdr;
+	int fd, res = -1;
+
+	if (openelf(path, &e, &fd) < 0)
+		return -1;
+
+	if (gelf_getehdr(e, &hdr))
+		res = (hdr.e_type == ET_DYN);
+
 	elf_end(e);
 	close(fd);
 

@@ -13,11 +13,12 @@ struct bcc_elf_usdt {
 	const char *arg_fmt;
 };
 
-typedef void (*bcc_elf_probecb)(struct bcc_elf_usdt *, void *);
+typedef void (*bcc_elf_probecb)(const char *, const struct bcc_elf_usdt *, void *);
 
 int bcc_elf_foreach_usdt(const char *path, bcc_elf_probecb callback, void *payload);
 int bcc_elf_loadaddr(const char *path, uint64_t *address);
 int bcc_elf_findsym(
 	const char *path, const char *sym, int binding, int type, uint64_t *addr);
+int bcc_elf_is_shared_obj(const char *path);
 
 #endif

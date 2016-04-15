@@ -102,3 +102,25 @@ lib.perf_reader_free.restype = None
 lib.perf_reader_free.argtypes = [ct.c_void_p]
 lib.perf_reader_fd.restype = int
 lib.perf_reader_fd.argtypes = [ct.c_void_p]
+
+# bcc external helpers
+lib.bcc_procutils_each_module.restype = ct.c_int
+lib.bcc_procutils_each_module.argtypes = [ct.c_int,
+        ct.CFUNCTYPE(None, ct.c_char_p, ct.c_ulonglong, c_ulonglong)]
+lib.bcc_procutils_which.restype = ct.c_char_p
+lib.bcc_procutils_which.argtypes = [ct.c_char_p]
+
+lib.bcc_elf_foreach_usdt.restype = ct.c_int
+lib.bcc_elf_foreach_usdt.argtypes = [ct.c_char_p,
+        ct.CFUNCTYPE(None, [ct.c_char_p, ProbeStruct, ct.py_object),
+        ct.py_object]
+
+lib.bcc_elf_loadaddr.restype = ct.c_int
+lib.bcc_elf_loadaddr.argtypes = [ct.c_char_p, ct.POINTER(ct.c_ulonglong)]
+
+lib.bcc_elf_findsym.restype = ct.c_int
+lib.bcc_elf_findsym.argtypes = [ct.c_char_p, ct.c_char_p, ct.c_int, ct.c_int,
+    ct.POINTER(ct.c_ulonglong)]
+
+lib.bcc_elf_is_shared_obj.restype = ct.c_int
+lib.bcc_elf_is_shared_obj.argtypes = [ct.c_char_p]
