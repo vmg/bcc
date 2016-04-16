@@ -1,9 +1,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <string.h>
 
-#include "bcc_elf.h"
+#include <gelf.h>
+#include "bcc_helpers.h"
 #define NT_STAPSDT 3
 
 static int openelf(const char *path, Elf **elf_out, int *fd_out)
@@ -72,7 +74,7 @@ static int do_note_segment(
 			if (hdr.n_namesz != 8)
 				continue;
 
-			if (memcmp(data->d_buf + name_off, "stapsdt", 8) != 0)
+			if (memcmp((const char *)data->d_buf + name_off, "stapsdt", 8) != 0)
 				continue;
 
 			desc = (const char *)data->d_buf + desc_off;
@@ -130,16 +132,10 @@ int bcc_elf_foreach_usdt(const char *path, bcc_elf_probecb callback, void *paylo
 }
 
 
-
-struct symtarget {
-	const char *name;
-	int binding;
-	int type;
-	uint64_t found_addr;
-};
-
-static int find_in_scn(
-	Elf *e, Elf_Scn *section, size_t stridx, size_t symsize, struct symtarget *target)
+static int list_in_scn(
+	Elf *e, Elf_Scn *section,
+	size_t stridx, size_t symsize,
+	bcc_elf_symcb callback, void *payload)
 {
 	Elf_Data *data = NULL;
 
@@ -156,27 +152,18 @@ static int find_in_scn(
 			if (!gelf_getsym(data, (int)i, &sym))
 				continue;
 
-			name = elf_strptr(e, stridx, sym.st_name);
-			if (!name || strcmp(name, target->name))
+			if ((name = elf_strptr(e, stridx, sym.st_name)) == NULL)
 				continue;
 
-			if (target->binding >= 0 &&
-				GELF_ST_BIND(sym.st_info) != target->binding)
-				continue;
-
-			if (target->type >= 0 &&
-				GELF_ST_TYPE(sym.st_info) != target->type)
-				continue;
-
-			target->found_addr = sym.st_value;
-			break;
+			if (callback(name, sym.st_value, sym.st_size, sym.st_info, payload) < 0)
+				break;
 		}
 	}
 
 	return 0;
 }
 
-static int findsymbol(Elf *e, struct symtarget *target)
+static int listsymbols(Elf *e, bcc_elf_symcb callback, void *payload)
 {
 	Elf_Scn *section = NULL;
 
@@ -189,39 +176,27 @@ static int findsymbol(Elf *e, struct symtarget *target)
 		if (header.sh_type != SHT_SYMTAB && header.sh_type != SHT_DYNSYM)
 			continue;
 
-		if (find_in_scn(e, section, header.sh_link, header.sh_entsize, target) < 0)
+		if (list_in_scn(e, section,
+			header.sh_link, header.sh_entsize, callback, payload) < 0)
 			return -1;
-
-		if (target->found_addr)
-			return 0;
 	}
 
-	return -1; /* not found */
+	return 0;
 }
 
-int bcc_elf_findsym(
-	const char *path, const char *sym, int binding, int type, uint64_t *addr)
+int bcc_elf_foreach_sym(const char *path, bcc_elf_symcb callback, void *payload)
 {
 	Elf *e;
 	int fd, res;
-	struct symtarget target;
 
 	if (openelf(path, &e, &fd) < 0)
 		return -1;
 
-	target.name = sym;
-	target.binding = binding;
-	target.type = type;
-	target.found_addr = 0x0;
-
-	res = findsymbol(e, &target);
+	res = listsymbols(e, callback, payload);
 	elf_end(e);
 	close(fd);
-
-	*addr = target.found_addr;
 	return res;
 }
-
 
 static int loadaddr(Elf *e, uint64_t *addr)
 {
