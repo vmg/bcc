@@ -131,6 +131,8 @@ class Probe {
   std::unordered_map<int, ProcStat> enabled_semaphores_;
   optional<bool> in_shared_object_;
 
+  std::string largest_arg_type(size_t arg_n);
+
   bool add_to_semaphore(int pid, int16_t val);
   bool resolve_global_address(uint64_t *global, const uint64_t addr, optional<int> pid);
   bool lookup_semaphore_addr(uint64_t *address, int pid);
@@ -142,6 +144,8 @@ public:
 
   size_t num_locations() const { return locations_.size(); }
   size_t num_arguments() const { return locations_.front().arguments_.size(); }
+
+  uint64_t address(size_t n = 0) const { return locations_[n].address_; }
 
   bool usdt_thunks(std::ostream &stream, const std::string &prefix);
   bool usdt_cases(std::ostream &stream, const optional<int> &pid = nullopt);
@@ -161,6 +165,7 @@ public:
 
 class Context {
   std::vector<Probe *> probes_;
+  optional<int> pid_;
   bool loaded_;
 
   static void _each_probe(const char *binpath, const struct bcc_elf_usdt *probe,
@@ -174,8 +179,12 @@ public:
   Context(const std::string &bin_path);
   Context(int pid);
 
+  optional<int> pid() const { return pid_; }
   bool loaded() const { return loaded_; }
   size_t num_probes() const { return probes_.size(); }
-  Probe *find_probe(const std::string &probe_name);
+
+  Probe *get(const std::string &probe_name) const;
+  Probe *get(int pos) const { return probes_[pos]; }
+  int get_idx(const std::string &probe_name) const;
 };
 }

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include <sstream>
+#include <cstring>
 
 #include <fcntl.h>
 #include <sys/types.h>
@@ -143,15 +144,8 @@ bool Probe::usdt_cases(std::ostream &stream, const optional<int> &pid) {
   const size_t arg_count = locations_[0].arguments_.size();
 
   for (size_t arg_n = 0; arg_n < arg_count; ++arg_n) {
-    Argument *largest = nullptr;
-    for (Location &location : locations_) {
-      Argument *candidate = location.arguments_[arg_n];
-      if (!largest ||
-          std::abs(candidate->arg_size()) > std::abs(largest->arg_size()))
-        largest = candidate;
-    }
-
-    tfm::format(stream, "%s arg%d = 0;\n", largest->ctype(), arg_n + 1);
+    tfm::format(stream, "%s arg%d = 0;\n",
+	largest_arg_type(arg_n), arg_n + 1);
   }
 
   for (size_t loc_n = 0; loc_n < locations_.size(); ++loc_n) {
@@ -169,41 +163,59 @@ bool Probe::usdt_cases(std::ostream &stream, const optional<int> &pid) {
   return true;
 }
 
-bool Probe::usdt_getarg(std::ostream &stream, const optional<int> &pid) {
-  assert(!locations_.empty());
+std::string Probe::largest_arg_type(size_t arg_n) {
+  Argument *largest = nullptr;
+  for (Location &location : locations_) {
+    Argument *candidate = location.arguments_[arg_n];
+    if (!largest ||
+	std::abs(candidate->arg_size()) > std::abs(largest->arg_size()))
+      largest = candidate;
+  }
 
+  assert(largest);
+  return largest->ctype();
+}
+
+bool Probe::usdt_getarg(std::ostream &stream, const optional<int> &pid) {
   const size_t arg_count = locations_[0].arguments_.size();
 
+  if (arg_count == 0)
+    return true;
+
+  stream << "#include <uapi/linux/ptrace.h>\n";
+
   for (size_t arg_n = 0; arg_n < arg_count; ++arg_n) {
-    Argument *largest = nullptr;
-    for (Location &location : locations_) {
-      Argument *candidate = location.arguments_[arg_n];
-      if (!largest ||
-          std::abs(candidate->arg_size()) > std::abs(largest->arg_size()))
-        largest = candidate;
-    }
-
-    std::string ctype = largest->ctype();
+    std::string ctype = largest_arg_type(arg_n);
     tfm::format(stream,
-      "static inline %s bpf_usdt_readarg_%d(struct pt_regs *ctx) {\n"
+      "static inline %s _bpf_readarg_%s_%d(struct pt_regs *ctx) {\n"
       "  %s result = 0x0;\n",
-      ctype, arg_n + 1, ctype);
+      ctype, name_, arg_n + 1, ctype);
 
-    for (Location &location : locations_) {
-      uint64_t global_address;
-
-      if (!resolve_global_address(&global_address, location.address_, pid))
-	return false;
-
-      tfm::format(stream, "  if (ctx->ip == 0x%xULL) {", global_address);
+    if (locations_.size() == 1) {
+      Location &location = locations_.front();
+      stream << "  ";
       if (!location.arguments_[arg_n]->assign_to_local(
 	  stream, "result", bin_path_, pid))
 	return false;
+      stream << "\n";
+    } else {
+      for (Location &location : locations_) {
+	uint64_t global_address;
 
-      stream << "}\n";
+	if (!resolve_global_address(&global_address, location.address_, pid))
+	  return false;
+
+	tfm::format(stream, "  if (ctx->ip == 0x%xULL) { ", global_address);
+	if (!location.arguments_[arg_n]->assign_to_local(
+	    stream, "result", bin_path_, pid))
+	  return false;
+
+	stream << "}\n";
+      }
     }
-    stream << "\nreturn result;\n}\n";
+    stream << "  return result;\n}\n";
   }
+  return true;
 }
 
 void Probe::add_location(uint64_t addr, const char *fmt) {
@@ -253,12 +265,21 @@ std::string Context::resolve_bin_path(const std::string &bin_path) {
   return result;
 }
 
-Probe *Context::find_probe(const std::string &probe_name) {
+Probe *Context::get(const std::string &probe_name) const {
   for (Probe *p : probes_) {
     if (p->name_ == probe_name)
       return p;
   }
   return nullptr;
+}
+
+int Context::get_idx(const std::string &probe_name) const {
+  const int probe_count = static_cast<int>(probes_.size());
+  for (int i = 0; i < probe_count; ++i) {
+    if (probes_[i]->name_ == probe_name)
+      return i;
+  }
+  return -1;
 }
 
 Context::Context(const std::string &bin_path) : loaded_(false) {
@@ -269,8 +290,77 @@ Context::Context(const std::string &bin_path) : loaded_(false) {
   }
 }
 
-Context::Context(int pid) : loaded_(false) {
+Context::Context(int pid) : pid_(pid), loaded_(false) {
   if (bcc_procutils_each_module(pid, _each_module, this) == 0)
     loaded_ = true;
 }
+}
+
+extern "C" {
+void *bcc_usdt_new_frompid(int pid) {
+  return static_cast<void *>(new USDT::Context(pid));
+}
+
+void *bcc_usdt_new_frompath(const char *path) {
+  return static_cast<void *>(new USDT::Context(path));
+}
+
+int bcc_usdt_loaded(void *usdt) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  return ctx->loaded();
+}
+
+int bcc_usdt_find_probe(void *usdt, const char *probe_name) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  return ctx->get_idx(probe_name);
+}
+
+char *bcc_usdt_probe_boilerplate(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+
+  std::ostringstream stream;
+  if (!probe->usdt_getarg(stream, ctx->pid()))
+    return nullptr;
+  return strdup(stream.str().c_str());
+}
+
+int bcc_usdt_probe_need_enable(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  return probe->need_enable();
+}
+
+int bcc_usdt_probe_enable(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  auto pid = ctx->pid();
+  return (pid && probe->enable(*pid)) ? 0 : -1;
+}
+
+int bcc_usdt_probe_disable(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  auto pid = ctx->pid();
+  return (pid && probe->disable(*pid)) ? 0 : -1;
+}
+
+size_t bcc_usdt_probe_location_count(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  return probe->num_locations();
+}
+
+uint64_t bcc_usdt_probe_address(void *usdt, int fd, size_t loc) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  return probe->address(loc);
+}
+
+const char *bcc_usdt_probe_binpath(void *usdt, int fd) {
+  USDT::Context *ctx = static_cast<USDT::Context *>(usdt);
+  USDT::Probe *probe = ctx->get(fd);
+  return probe->bin_path().c_str();
+}
+
 }

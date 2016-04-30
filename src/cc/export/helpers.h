@@ -410,5 +410,9 @@ int bpf_num_cpus() asm("llvm.bpf.extra");
 
 #define lock_xadd(ptr, val) ((void)__sync_fetch_and_add(ptr, val))
 
+#define bpf_usdt_readarg(ctx, probearg) _bpf_readarg_##probearg(ctx)
+#define bpf_usdt_readarg_p(buf, len, ctx, probearg) \
+  bpf_probe_read(buf, len, (void *)(bpf_usdt_readarg(ctx, probearg))); 
+
 #endif
 )********"

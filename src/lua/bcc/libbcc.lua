@@ -112,6 +112,21 @@ int bcc_symcache_resolve(void *symcache, uint64_t addr, struct bcc_symbol *sym);
 void bcc_symcache_refresh(void *resolver);
 ]]
 
+ffi.cdef[[
+void *bcc_usdt_new_frompid(int pid);
+void *bcc_usdt_new_frompath(const char *path);
+int bcc_usdt_loaded(void *usdt);
+int bcc_usdt_find_probe(void *usdt, const char *probe_name);
+
+char *bcc_usdt_probe_boilerplate(void *usdt, int fd);
+int bcc_usdt_probe_need_enable(void *usdt, int fd);
+int bcc_usdt_probe_enable(void *usdt, int fd);
+int bcc_usdt_probe_disable(void *usdt, int fd);
+size_t bcc_usdt_probe_location_count(void *usdt, int fd);
+uint64_t bcc_usdt_probe_address(void *usdt, int fd, size_t loc);
+const char *bcc_usdt_probe_binpath(void *usdt, int fd);
+]]
+
 if rawget(_G, "BCC_STANDALONE") then
   return ffi.C
 else
