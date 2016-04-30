@@ -51,6 +51,16 @@ bool Probe::in_shared_object() {
   return in_shared_object_.value();
 }
 
+bool Probe::resolve_global_address(uint64_t *global, const uint64_t addr, optional<int> pid) {
+  if (in_shared_object()) {
+    return (pid &&
+	bcc_resolve_global_addr(*pid, bin_path_.c_str(), addr, global) == 0);
+  }
+
+  *global = addr;
+  return true;
+}
+
 bool Probe::lookup_semaphore_addr(uint64_t *address, int pid) {
   auto it = semaphores_.find(pid);
   if (it != semaphores_.end()) {
@@ -58,12 +68,8 @@ bool Probe::lookup_semaphore_addr(uint64_t *address, int pid) {
     return true;
   }
 
-  if (in_shared_object()) {
-    uint64_t load_address = 0x0;  // TODO
-    *address = load_address + semaphore_;
-  } else {
-    *address = semaphore_;
-  }
+  if (!resolve_global_address(address, semaphore_, pid))
+    return false;
 
   semaphores_[pid] = *address;
   return true;
@@ -161,6 +167,43 @@ bool Probe::usdt_cases(std::ostream &stream, const optional<int> &pid) {
     stream << "}\n";
   }
   return true;
+}
+
+bool Probe::usdt_getarg(std::ostream &stream, const optional<int> &pid) {
+  assert(!locations_.empty());
+
+  const size_t arg_count = locations_[0].arguments_.size();
+
+  for (size_t arg_n = 0; arg_n < arg_count; ++arg_n) {
+    Argument *largest = nullptr;
+    for (Location &location : locations_) {
+      Argument *candidate = location.arguments_[arg_n];
+      if (!largest ||
+          std::abs(candidate->arg_size()) > std::abs(largest->arg_size()))
+        largest = candidate;
+    }
+
+    std::string ctype = largest->ctype();
+    tfm::format(stream,
+      "static inline %s bpf_usdt_readarg_%d(struct pt_regs *ctx) {\n"
+      "  %s result = 0x0;\n",
+      ctype, arg_n + 1, ctype);
+
+    for (Location &location : locations_) {
+      uint64_t global_address;
+
+      if (!resolve_global_address(&global_address, location.address_, pid))
+	return false;
+
+      tfm::format(stream, "  if (ctx->ip == 0x%xULL) {", global_address);
+      if (!location.arguments_[arg_n]->assign_to_local(
+	  stream, "result", bin_path_, pid))
+	return false;
+
+      stream << "}\n";
+    }
+    stream << "\nreturn result;\n}\n";
+  }
 }
 
 void Probe::add_location(uint64_t addr, const char *fmt) {

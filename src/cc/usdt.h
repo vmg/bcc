@@ -132,6 +132,7 @@ class Probe {
   optional<bool> in_shared_object_;
 
   bool add_to_semaphore(int pid, int16_t val);
+  bool resolve_global_address(uint64_t *global, const uint64_t addr, optional<int> pid);
   bool lookup_semaphore_addr(uint64_t *address, int pid);
   void add_location(uint64_t addr, const char *fmt);
 
@@ -144,6 +145,7 @@ public:
 
   bool usdt_thunks(std::ostream &stream, const std::string &prefix);
   bool usdt_cases(std::ostream &stream, const optional<int> &pid = nullopt);
+  bool usdt_getarg(std::ostream &stream, const optional<int> &pid = nullopt);
 
   bool need_enable() const { return semaphore_ != 0x0; }
   bool enable(int pid);
