@@ -26,7 +26,6 @@ import sys
 basestring = (unicode if sys.version_info[0] < 3 else str)
 
 from .libbcc import lib, _CB_TYPE, bcc_symbol
-from .procstat import ProcStat, ProcUtils
 from .table import Table
 from .tracepoint import Perf, Tracepoint
 from .usyms import ProcessSymbols
@@ -134,7 +133,8 @@ class BPF(object):
                     raise Exception("Could not find file %s" % filename)
         return filename
 
-    def __init__(self, src_file="", hdr_file="", text=None, cb=None, debug=0, cflags=[]):
+    def __init__(self, src_file="", hdr_file="", text=None, cb=None, debug=0,
+            cflags=[], usdt=None):
         """Create a a new BPF module with the given source code.
 
         Note:
@@ -158,6 +158,8 @@ class BPF(object):
         self.tables = {}
         cflags_array = (ct.c_char_p * len(cflags))()
         for i, s in enumerate(cflags): cflags_array[i] = s.encode("ascii")
+        if usdt and text: text = usdt.get_text() + text
+
         if text:
             self.module = lib.bpf_module_create_c_from_string(text.encode("ascii"),
                     self.debug, cflags_array, len(cflags_array))
@@ -173,6 +175,8 @@ class BPF(object):
 
         if self.module == None:
             raise Exception("Failed to compile BPF module %s" % src_file)
+
+        if usdt: usdt.attach_uprobes(self)
 
         # If any "kprobe__" prefixed functions were defined, they will be
         # loaded and attached here.
@@ -686,5 +690,5 @@ class BPF(object):
         except KeyboardInterrupt:
             exit()
 
-from .usdt import USDTReader
+from .usdt import USDT
 
